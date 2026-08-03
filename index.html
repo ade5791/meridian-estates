@@ -1,0 +1,161 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Meridian Estates - 3D Property Trading Game</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%2316202e'/%3E%3Crect x='8' y='14' width='16' height='12' fill='%23d8c07a'/%3E%3Cpath d='M6 15 L16 6 L26 15 Z' fill='%23b03030'/%3E%3C/svg%3E">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; background: #101822; color: #e8e4d8;
+    font-family: Georgia, 'Times New Roman', serif;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+    -webkit-user-select: none; user-select: none; }
+  input, select, textarea { -webkit-user-select: text; user-select: text; }
+  #scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  .hidden { display: none !important; }
+
+  #setup { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(circle at 50% 30%, #1c2c3e, #0b1119); z-index: 50; }
+  .setup-card { background: #16202e; border: 1px solid #2e4258; border-radius: 12px;
+    padding: 32px 40px; width: 340px; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+  .setup-card h1 { font-size: 26px; color: #d8c07a; letter-spacing: 1px; }
+  .setup-card .sub { color: #8fa3b8; margin-bottom: 18px; font-size: 13px; }
+  .seat { display: flex; justify-content: space-between; align-items: center; margin: 8px 0; }
+  /* S5-FIX-05: setup-screen controls also need the 44px touch minimum. */
+  .seat select, .seed-row input { background: #0e1620; color: #e8e4d8; border: 1px solid #2e4258;
+    border-radius: 6px; padding: 4px 8px; font-family: inherit;
+    min-height: 44px; font-size: 16px; }
+  .seed-row { margin: 14px 0; font-size: 14px; }
+  .seed-row input { width: 110px; }
+  .seed-row select { min-width: 170px; }
+  /* S6b-FIX-05: state the end conditions on the setup screen. */
+  .setup-note { color: #8fa3b8; font-size: 12px; line-height: 1.5; margin: 10px 0 16px;
+                text-align: left; }
+
+  #ui { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+  #ui > * { pointer-events: auto; }
+  #hud { position: absolute; top: 12px; left: 12px; right: 12px; display: flex;
+    gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+  #players { display: flex; gap: 8px; flex-wrap: wrap; }
+  .player-chip { background: rgba(14,22,32,.88); border: 1px solid #2e4258; border-radius: 8px;
+    padding: 6px 10px; font-size: 13px; display: flex; gap: 6px; align-items: center; }
+  .player-chip.current { border-color: #d8c07a; box-shadow: 0 0 8px rgba(216,192,122,.4); }
+  .player-chip.dead { opacity: .45; }
+  .player-chip .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  #turn-info { background: rgba(14,22,32,.88); border: 1px solid #2e4258; border-radius: 8px;
+    padding: 6px 10px; font-size: 13px; }
+  #game-status { color: #d8c07a; font-size: 15px; font-weight: bold; padding: 6px 4px; }
+
+  /* S5-FIX-03: raised above #panel-wrap (z-index 30). While a modal decision is
+     open the action bar renders ONLY the utility buttons (Save/Load/Export);
+     at z-index 10 the modal scrim swallowed those clicks, so the player could
+     not save mid-auction / mid-decision -- the exact state most worth saving. */
+  #actions { position: absolute; bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    left: 50%; transform: translateX(-50%); max-width: 96vw; z-index: 35;
+    display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: center; }
+  .btn { background: #223246; color: #e8e4d8; border: 1px solid #3a516b; border-radius: 8px;
+    padding: 9px 16px; font-family: inherit; font-size: 14px; cursor: pointer;
+    min-height: 44px; min-width: 44px; }
+  .btn:hover { background: #2c405a; }
+  .btn.primary { background: #8a6d2e; border-color: #b3903f; color: #fff4d6; }
+  .btn.primary:hover { background: #a1803a; }
+  .btn.small { padding: 5px 10px; font-size: 12px; }
+  .btn.big { width: 100%; padding: 12px; font-size: 16px; margin-top: 8px; }
+  .btn:disabled { opacity: .4; cursor: default; }
+  .util-btns { display: flex; gap: 6px; margin-left: 14px; }
+  .ai-note { background: rgba(14,22,32,.88); border: 1px solid #2e4258; border-radius: 8px;
+    padding: 8px 14px; font-size: 13px; font-style: italic; color: #9fb3c8; }
+
+  #log { position: absolute; right: 12px; top: 70px; width: 250px; max-height: 44vh;
+    overflow-y: auto; font-size: 12px; display: flex; flex-direction: column; gap: 3px; }
+  .log-line { background: rgba(14,22,32,.75); border-radius: 6px; padding: 4px 8px; color: #b9c6d4; }
+
+  /* S5-FIX-06: the scrim sits BELOW the action bar (35) so Save/Load stay
+     reachable mid-decision, but #panel itself sits ABOVE it (38) so the modal
+     content can never be occluded by the action bar in short viewports. */
+  #panel-wrap { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: rgba(5,9,14,.55); z-index: 30; }
+  #panel-wrap #panel { position: relative; z-index: 38; }
+  #panel { background: #16202e; border: 1px solid #3a516b; border-radius: 12px; padding: 22px 26px;
+    width: min(480px, 92vw); max-height: 84vh; overflow-y: auto;
+    box-shadow: 0 24px 70px rgba(0,0,0,.6); }
+  #panel h3 { color: #d8c07a; margin-bottom: 10px; }
+  #panel p { margin: 8px 0; font-size: 14px; }
+  #panel .btn { margin: 8px 6px 0 0; }
+  /* S5-FIX-05: inputs/selects are interactive touch targets too. These were
+     25-27px tall -- below the 44px minimum -- so the auction bid field and the
+     trade cash fields were hard to hit on touch. Buttons already met the bar;
+     the S4 sweep only measured <button>, which is why this was missed. */
+  #panel input[type=number] { background: #0e1620; color: #e8e4d8; border: 1px solid #2e4258;
+    border-radius: 6px; padding: 5px 8px; width: 110px; font-family: inherit;
+    min-height: 44px; font-size: 16px; }
+  #panel select { background: #0e1620; color: #e8e4d8; border: 1px solid #2e4258;
+    border-radius: 6px; padding: 4px 8px; font-family: inherit;
+    min-height: 44px; font-size: 16px; }
+  #panel input[type=checkbox] { width: 22px; height: 22px; vertical-align: middle; }
+  #panel label { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; }
+  .tile-card { border: 1px solid #3a516b; border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
+  .tile-strip { height: 16px; }
+  .tile-card h3 { padding: 8px 12px 0; }
+  .tile-card div { padding: 2px 12px 8px; font-size: 13px; color: #b9c6d4; }
+  .rent-rows { font-size: 12px !important; }
+  .manage-list { display: flex; flex-direction: column; gap: 5px; margin: 10px 0; }
+  .manage-row { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+    background: rgba(14,22,32,.6); border-radius: 6px; padding: 5px 9px; font-size: 13px; flex-wrap: wrap; }
+  .trade-cols { display: flex; gap: 18px; }
+  .trade-cols > div { flex: 1; }
+  .trade-cols h4 { color: #9fb3c8; margin-bottom: 6px; }
+  .trade-cols label { display: block; font-size: 13px; margin: 3px 0; }
+
+  #toast { position: fixed; top: 68px; left: 50%; transform: translateX(-50%);
+    background: #1e2c3d; border: 1px solid #d8c07a; border-radius: 8px; padding: 9px 18px;
+    font-size: 14px; z-index: 40; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+
+  @media (max-width: 700px) {
+    #log { display: none; }
+    .player-chip { font-size: 11px; padding: 4px 7px; }
+    .btn { padding: 10px 14px; font-size: 13px; }
+    #hud { top: calc(8px + env(safe-area-inset-top, 0px)); left: 8px; right: 8px; gap: 6px; }
+    #panel { padding: 16px 14px; width: min(480px, 94vw); max-height: 78vh; }
+    .trade-cols { flex-direction: column; gap: 10px; }
+    #mute-btn { top: auto !important; bottom: calc(16px + env(safe-area-inset-bottom, 0px)) !important;
+      right: calc(10px + env(safe-area-inset-right, 0px)) !important; }
+  }
+  /* S5-FIX-06: keyed on VIEWPORT HEIGHT, not width. The old gate was
+     "(max-width: 700px) and (orientation: landscape)", so a 844x390 phone in
+     landscape matched NEITHER the <=700px mobile rules nor these landscape
+     rules: it kept the wide bottom-centred action bar in a 390px-tall window,
+     which then overlapped the modal panel. Short viewports are the actual
+     condition being handled here. */
+  @media (max-height: 480px) and (orientation: landscape) {
+    #log { display: none; }
+    .player-chip { font-size: 11px; padding: 4px 7px; }
+    #hud { top: calc(6px + env(safe-area-inset-top, 0px)); left: 8px; right: 8px; gap: 6px; }
+    #actions { left: auto; right: calc(12px + env(safe-area-inset-right, 0px));
+      transform: none; bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+      flex-direction: column; align-items: flex-end; max-width: 34vw; }
+    /* leave room for the side-mounted action column so the modal never sits under it */
+    #panel { max-height: 84vh; width: min(460px, 58vw); }
+    .trade-cols { flex-direction: row; gap: 10px; }
+    #mute-btn { bottom: auto !important; top: calc(10px + env(safe-area-inset-top, 0px)) !important; }
+  }
+  #about-link { position: fixed; left: calc(10px + env(safe-area-inset-left, 0px));
+    bottom: calc(10px + env(safe-area-inset-bottom, 0px)); z-index: 12;
+    color: #8fa3b8; font-size: 12px; text-decoration: none;
+    background: rgba(14,22,32,.8); border: 1px solid #2e4258; border-radius: 6px;
+    padding: 6px 10px; min-height: 32px; display: inline-flex; align-items: center; }
+  #about-link:hover { color: #d8c07a; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div id="ui"></div>
+<div id="setup" class="hidden"></div>
+<script type="module" src="./src/main.js"></script>
+<a id="about-link" href="./about.html">About &amp; Rules</a>
+</body>
+</html>

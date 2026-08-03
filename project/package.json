@@ -1,0 +1,16 @@
+{
+  "name": "meridian-estates",
+  "version": "0.3.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "serve": "python -m http.server 8144"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "playwright-core": "^1.62.1"
+  }
+}
