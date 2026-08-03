@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { TILES, GROUP_COLORS } from '../rules/board.js';
 import { Resilience } from './resilience.js';
 import { LandmarkFactory } from './landmarks.js';
+import { CameraControl } from './camControl.js';
 
 const BOARD = 22;          // world units across
 const TILE_W = BOARD / 11; // corner tiles are TILE_W x TILE_W
@@ -133,6 +134,11 @@ export class RenderSystem {
       () => this.forceDirect(),
       () => this.stepDownQuality());
 
+    // S6d-FIX-03: player camera control (drag-orbit, wheel/pinch zoom, keys).
+    // Disabled for the QA orbit path so the perf matrix keeps its scripted
+    // camera motion, and it never fights the harness.
+    this.controls = this.orbit ? null : new CameraControl(this.camera, this.canvas);
+
     this.bindEvents();
     this.resize();
     window.addEventListener('resize', this._onResize = () => this.resize());
@@ -229,6 +235,16 @@ export class RenderSystem {
     this.camera.position.copy(this.camDefault);
     this.camera.up.set(0, 1, 0);
     this.camera.lookAt(this.camAim);
+
+    // S6d-FIX-03: hand the SOLVED framing to the orbit controller. It becomes
+    // both the opening pose and the "Reset View" target, so free-look never
+    // costs the correct default framing on any viewport.
+    if (this.controls) this.controls.setDefault(this.camDefault, this.camAim);
+  }
+
+  // S6d-FIX-03: UI hook - return the camera to the solved default framing.
+  resetView() {
+    if (this.controls) this.controls.reset();
   }
 
   // ---------- board ----------
@@ -605,10 +621,72 @@ export class RenderSystem {
       2: [0, 0, -Math.PI / 2], 5: [0, 0, Math.PI / 2],
       3: [Math.PI / 2, 0, 0], 4: [-Math.PI / 2, 0, 0],
     };
+    // S6d-FIX-02: a real THROW, not a spin-in-place.
+    // Before: 900ms of constant-rate rotation with a single sine hop, then an
+    // instant snap to the final face - the roll read as a placeholder. Now the
+    // dice are launched from off-board, travel an arc, take three decaying
+    // bounces on the felt, tumble with per-die axis rates that decay with the
+    // bounces, and ease into the final face over the settle window. Duration
+    // is 2600ms at 1x (was 900ms). Still cosmetic-only and driven by
+    // performance.now - the documented determinism trade-off. The RESULT is
+    // unchanged: d1/d2 come from the seeded stream before this is called.
+    const now = performance.now();
+    // S6d-FIX-02b: PACING GUARD. The AI turn loop blocks on isAnimating(), so
+    // a full-length throw on every AI roll would add ~2s x 3 AI x ~30 rounds
+    // to a game - the exact "never completes" symptom reported on the live
+    // build. The long cinematic throw is therefore spent where the player is
+    // actually watching (their own roll); AI rolls use a brisk throw with the
+    // identical motion shape, and reduced-motion / autoplay stay fastest.
+    let human = true;
+    try {
+      const eng = this.ctx && this.ctx.get('engine');
+      const pl = eng && eng.state && eng.state.players && eng.state.players[p.player];
+      if (pl && pl.ai) human = false;
+    } catch (err) { /* default to the human timing */ }
+    const base = this.fast ? 320 : (human ? 2600 : 1150);
+    // S6d-FIX-02c: the speed control divides every animation, and 4x is the
+    // shipped default - so a "longer" throw would still collapse to 650ms for
+    // almost every real player. The dice are the one thing the player actually
+    // watches, so the throw uses a DAMPENED divisor (capped at 2x): a 4x or 8x
+    // game still runs fast, but the roll stays readable instead of a blur.
+    const diceDiv = Math.min(this.speed || 1, 2);
+    // The player's own roll keeps a cinematic FLOOR (2.2s) regardless of the
+    // speed multiplier - the speed control exists to skip AI thinking time,
+    // not to make the one animation the player is watching unreadable. AI
+    // rolls and reduced-motion/autoplay stay fully divisible and brisk.
+    const raw = base / diceDiv;
+    const dur = (human && !this.fast && !this.reducedMotion) ? Math.max(raw, 2200) : raw;
+    const dice = [];
+    for (let i = 0; i < this.diceMeshes.length; i++) {
+      // deterministic-per-roll variation from the rolled values, so the same
+      // seeded game replays with the same throw shape.
+      const s = ((p.d1 * 73856093) ^ (p.d2 * 19349663) ^ (i * 83492791)) >>> 0;
+      const r1 = ((s % 1000) / 1000);
+      const r2 = (((s >>> 10) % 1000) / 1000);
+      const r3 = (((s >>> 20) % 1000) / 1000);
+      dice.push({
+        from: { x: (i === 0 ? -4.6 : -3.9) - r1 * 0.6, z: 4.9 + r2 * 0.5 },
+        to: { x: i === 0 ? -1 : 1, z: 2 },
+        // S6d-FIX-02e: WHOLE revolutions per axis. Integer turns are what let
+        // the die spin freely and still show the true face at every instant -
+        // the tumble decays onto the result instead of being corrected onto it.
+        turns: {
+          x: 3 + Math.floor(r1 * 3),
+          y: 2 + Math.floor(r2 * 3),
+          z: 2 + Math.floor(r3 * 2),
+        },
+        phase: r3 * Math.PI * 2,
+        lift: 2.5 + r2 * 0.9,
+      });
+    }
     this.diceAnim = {
-      t0: performance.now(),
-      dur: (this.fast ? 250 : 900) / this.speed,
+      t0: now,
+      dur,
+      travel: 0.42,   // fraction of dur spent airborne on the initial arc
+      settle: 0.80,   // fraction of dur after which the face eases into place
+      dice,
       final: [faceUp[p.d1], faceUp[p.d2]],
+      bounced: 0,
     };
     // dice glow from pool
     const pool = this.ctx.get('lights');
@@ -618,7 +696,7 @@ export class RenderSystem {
         l.position.set(0, 2.2, 2);
         l.color.setHex(0xaad4ff);
         l.intensity = 4;
-        setTimeout(() => pool.release(l), this.fast ? 300 : 1000);
+        setTimeout(() => pool.release(l), this.fast ? 380 : dur + 260);
       }
     }
   }
@@ -686,26 +764,88 @@ export class RenderSystem {
       this.camera.position.set(Math.sin(this.orbitAngle) * r, this.camDefault.y,
         Math.cos(this.orbitAngle) * r);
       this.camera.lookAt(0, 0, 0);
+    } else if (this.controls) {
+      // S6d-FIX-03: PLAYER-CONTROLLED camera. Starts at the S6b solved
+      // framing and only ever moves in response to player input (drag,
+      // wheel, pinch, arrows/WASD, R to reset). It is damped, so the board
+      // never snaps - which is what made the old auto-follow read as glitching.
+      this.controls.update(dtMs);
     } else {
-      // S6b-FIX-01: fixed, centred framing. The camera sits at the fitted
-      // default and always looks at the solved aim point, so the board stays
-      // centred and motionless for the whole game. Only the tokens move.
+      // Fallback if the controller could not be created (e.g. QA orbit path).
       this.camera.position.copy(this.camDefault);
       this.camera.lookAt(this.camAim || this._originAim ||
         (this._originAim = new THREE.Vector3(0, 0, 0)));
     }
 
-    // dice tumble
+    // S6d-FIX-02: dice THROW - arc, decaying bounces, tumble decay, eased snap.
     if (this.diceAnim) {
       const d = this.diceAnim;
       const k = Math.min(1, (now - d.t0) / d.dur);
+      const dtS = Math.min(0.05, dtMs / 1000); // clamp so a stall cannot spin wildly
+      const REST = 0.6;                        // resting centre height on the felt
       this.diceMeshes.forEach((m, i) => {
-        if (k < 1) {
-          m.rotation.x += 0.35; m.rotation.y += 0.27; m.rotation.z += 0.19;
-          m.position.y = 0.6 + Math.sin(k * Math.PI) * 1.2;
+        const cfg = d.dice[i];
+        if (!cfg) return;
+        if (k >= 1) {
+          m.rotation.set(d.final[i][0], d.final[i][1], d.final[i][2]);
+          m.position.set(cfg.to.x, REST, cfg.to.z);
+          return;
+        }
+        // --- horizontal travel: fast out of the hand, easing as it slides ---
+        const kt = Math.min(1, k / d.travel);
+        const ease = 1 - Math.pow(1 - kt, 2.4);       // decelerating slide
+        m.position.x = cfg.from.x + (cfg.to.x - cfg.from.x) * ease;
+        m.position.z = cfg.from.z + (cfg.to.z - cfg.from.z) * ease;
+
+        // --- vertical: one launch arc then three decaying bounces ---
+        let y;
+        if (kt < 1) {
+          y = REST + Math.sin(kt * Math.PI) * cfg.lift;
         } else {
-          m.rotation.set(...d.final[i]);
-          m.position.y = 0.6;
+          const kb = (k - d.travel) / (1 - d.travel);  // 0..1 after landing
+          // three bounces of shrinking height and shrinking period
+          const B = [{ s: 0.00, e: 0.34, h: 0.85 },
+                     { s: 0.34, e: 0.60, h: 0.34 },
+                     { s: 0.60, e: 0.78, h: 0.12 }];
+          y = REST;
+          for (const b of B) {
+            if (kb >= b.s && kb < b.e) {
+              const t = (kb - b.s) / (b.e - b.s);
+              y = REST + Math.sin(t * Math.PI) * b.h;
+              break;
+            }
+          }
+        }
+        m.position.y = y;
+
+        // --- tumble: whole revolutions that DECAY ONTO the final face ---
+        // S6d-FIX-02e: the earlier model integrated a free spin and then
+        // corrected onto the face at the end. Measured, that correction was a
+        // ~3 rad unwind crammed into the last 20% of the throw - the die
+        // visibly sped up as it landed (late angular delta 8.7 rad vs 2.0
+        // early). Physically wrong and the opposite of settling.
+        //
+        // Now the orientation is expressed ANALYTICALLY as
+        //     rotation = finalFace + wholeTurns * 2PI * decay(k)
+        // with decay: 1 -> 0. Because the offset is an integer number of full
+        // turns, the die shows the correct face throughout, and because
+        // decay' shrinks monotonically the angular velocity can only ever
+        // decrease. It arrives exactly on the face with zero residual spin -
+        // no correction step, and frame-rate independent (a pure function of
+        // k, so it cannot drift on a slow device).
+        const fin = d.final[i];
+        const u = Math.pow(1 - k, 2.2);                 // 1 -> 0, easing out
+        m.rotation.x = fin[0] + cfg.turns.x * Math.PI * 2 * u;
+        m.rotation.y = fin[1] + cfg.turns.y * Math.PI * 2 * u;
+        m.rotation.z = fin[2] + cfg.turns.z * Math.PI * 2 * u;
+
+        // --- settle: ease the last hop height out so it comes to rest flat ---
+        // Orientation needs no separate settle step: the analytic decay above
+        // already lands it exactly on the face with zero residual spin.
+        if (k > d.settle) {
+          const ks = (k - d.settle) / (1 - d.settle);
+          const w = ks * ks * (3 - 2 * ks);             // smoothstep
+          m.position.y = y + (REST - y) * w;
         }
       });
       if (k >= 1) this.diceAnim = null;
@@ -730,6 +870,51 @@ export class RenderSystem {
     return (first - 1 + 40) % 40;
   }
 
+  // S6d-FIX-04: SHADER PREWARM.
+  // Measured: orbiting the camera pushed programs 4 -> 7, because materials
+  // that were never drawn from the fixed default angle compile lazily on the
+  // first frame that reveals them. Bounded (it plateaus at 7, so not a leak),
+  // but a mid-play compile is a multi-frame stall - and now that the player
+  // can orbit freely, it happens exactly when they first drag the board.
+  // Compiling the whole graph up front moves that cost into load.
+  prewarm() {
+    const before = this.renderer.info.programs.length;
+    try {
+      // Warm every material in the graph - including the ones that boot with
+      // visible = false (dice, card, owner rings, mortgage marks) - so the
+      // first roll or card draw never pays a compile mid-play. Objects are
+      // revealed only for the compile() walk, then restored to their exact
+      // previous flag; no frame is drawn, so there is no flash, and no clock,
+      // RNG or game state is touched (capture-safe).
+      //
+      // MEASURED, and worth recording because it overturned an earlier
+      // reading: the 3 programs that appear ~10s into a session are NOT a cold
+      // shader or a leak. Their cache keys differ from the warm set in exactly
+      // one field - a bitmask changing 132099 -> 131075, i.e. the shadow bit
+      // cleared. That is the ONE automatic quality step-down recompiling lit
+      // materials on the CPU rasterizer. Proof: ?nostepdown=1 holds programs
+      // flat at 5 across the same idle window, while the default run goes
+      // 5 -> 8 with steppedDown=true and shadowMap=false. v2 rule 3 working as
+      // specified - so prewarm should NOT try to chase those 3 away.
+      const hidden = [];
+      this.scene.traverse((o) => {
+        if (o.visible === false) { hidden.push(o); o.visible = true; }
+      });
+      try {
+        this.renderer.compile(this.scene, this.camera);
+      } finally {
+        for (const o of hidden) o.visible = false;
+      }
+      this._prewarmed = true;
+    } catch (e) {
+      // Never let prewarm block boot; the lazy path still works.
+      this._prewarmed = false;
+    }
+    this._prewarmPrograms = this.renderer.info.programs.length;
+    this._prewarmAdded = this._prewarmPrograms - before;
+    return this._prewarmPrograms;
+  }
+
   render() {
     this.renderer.render(this.scene, this.camera);
   }
@@ -752,6 +937,8 @@ export class RenderSystem {
     // texture created by this system is disposed; the scene is emptied.
     this.disposed = true;
     window.removeEventListener('resize', this._onResize);
+    // S6d-FIX-03: remove every camera-control listener (leak audit discipline)
+    if (this.controls) { this.controls.dispose(); this.controls = null; }
     // S5-FIX-07: drop the reduced-motion media listener (leak audit discipline)
     if (this._rmQuery && this._rmHandler) {
       if (this._rmQuery.removeEventListener) this._rmQuery.removeEventListener('change', this._rmHandler);

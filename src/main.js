@@ -118,6 +118,17 @@ function startGame(config) {
   const AI_BASE_DELAY = autoplay ? 30 : 900;
   const aiDelay = () => AI_BASE_DELAY / (render.speed || 1);
 
+  // S6d-FIX-04: prewarm shaders BEFORE the first frame. With free camera
+  // orbit the player can reveal materials that the fixed default angle never
+  // drew, and those would otherwise compile mid-drag (measured 4 -> 7
+  // programs). Compiling here moves the cost into load, where it is hidden.
+  try {
+    const n = render.prewarm();
+    if (typeof console !== 'undefined' && console.debug) {
+      console.debug('[prewarm] programs compiled:', n);
+    }
+  } catch (e) { /* prewarm is best-effort; never block boot */ }
+
   // ---------- RAF loop with frame-error containment (v2 rule 3) ----------
   let last = performance.now();
   let stopped = false;

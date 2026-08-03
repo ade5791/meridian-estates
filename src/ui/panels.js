@@ -183,8 +183,19 @@ export class UISystem {
       this.toast('Speed ' + next + 'x');
     };
 
+    // S6d-FIX-03: camera reset. Free orbit is only safe to ship if the player
+    // can always get back to the solved framing - otherwise a bad drag looks
+    // like the board broke. Always rendered, including during AI turns.
+    const viewBtn = el('button', 'btn small', 'Reset View');
+    viewBtn.title = 'Recentre the camera (drag to orbit, scroll or pinch to zoom, R resets)';
+    viewBtn.onclick = () => {
+      const r = this.ctx.get('render');
+      if (r && r.resetView) r.resetView();
+      this.toast('View reset');
+    };
+
     const wrap = el('div', 'util-btns');
-    wrap.append(save, load, exp, speedBtn);
+    wrap.append(save, load, exp, speedBtn, viewBtn);
     this.$actions.appendChild(wrap);
   }
 
