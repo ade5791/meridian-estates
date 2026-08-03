@@ -142,7 +142,28 @@
   <p><b>148 of 148 stage executions passed, with zero console errors across the whole matrix.</b>
      Unit tests: 23 of 23 pass (rules, event-contract conformance, resilience watchdog).</p>
 
-  <h3>Runtime resilience</h3>
+  <h3>Board detail, dice and camera (S6d, measured on the live deployment)</h3>
+<ul>
+  <li>All <b>40</b> tiles carry multi-part 3D landmarks: <b>1,077</b> meshes in total,
+      between <b>16</b> and <b>42</b> parts per tile, drawn from a shared
+      geometry/material cache (<b>434</b> geometries and <b>253</b> materials serve
+      <b>1,229</b> meshes, so detail was added without per-tile allocation).</li>
+  <li>A human dice roll animates for <b>2,443&nbsp;ms</b> on the live build, with
+      <b>3</b> decaying bounce peaks (apex y=3.24) before settling on the rolled face.
+      AI rolls use a short throw so a full game still finishes.</li>
+  <li>Free camera: dragging moved the camera <b>28.84</b> units, the wheel pulled the
+      orbit radius from <b>22.3</b> to <b>11.5</b>, and <b>Reset View</b> returned to the
+      solved framing to within <b>0.000</b> units.</li>
+  <li>A complete game was played on the live URL through the setup screen with
+      <b>83</b> real button clicks, finishing in <b>124.8&nbsp;s</b>
+      ("Ava wins by net worth at the round cap after 31 rounds") with
+      <b>0</b> console errors.</li>
+  <li>Camera controller listeners are released on teardown: after 5 restart cycles the
+      geometry, texture, program, light, canvas and DOM-node counts all returned exactly
+      to baseline.</li>
+</ul>
+
+<h3>Runtime resilience</h3>
   <ul>
     <li><b>Fixed light pool.</b> Scene light count sampled every 500 ms for a complete
         35-round AI game with all effects firing. Distinct values observed: <code>[8]</code>.
