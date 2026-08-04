@@ -118,6 +118,17 @@ function startGame(config) {
   const AI_BASE_DELAY = autoplay ? 30 : 900;
   const aiDelay = () => AI_BASE_DELAY / (render.speed || 1);
 
+  // S6d-FIX-04: prewarm shaders BEFORE the first frame. With free camera
+  // orbit the player can reveal materials that the fixed default angle never
+  // drew, and those would otherwise compile mid-drag (measured 4 -> 7
+  // programs). Compiling here moves the cost into load, where it is hidden.
+  try {
+    const n = render.prewarm();
+    if (typeof console !== 'undefined' && console.debug) {
+      console.debug('[prewarm] programs compiled:', n);
+    }
+  } catch (e) { /* prewarm is best-effort; never block boot */ }
+
   // ---------- RAF loop with frame-error containment (v2 rule 3) ----------
   let last = performance.now();
   let stopped = false;
@@ -235,6 +246,27 @@ window.__qa = {
     return true;
   },
   stop() { if (current) { current.stop(); current = null; } return true; },
+  // S6e: QA accessors for the board URL plate. Exposing the live subsystem lets
+  // the gate prove the plate is really in the scene graph, textured, positioned
+  // clear of the dice/emblem, and actually drawn - rather than inferring it from
+  // source. Read-only helpers; no gameplay surface is added.
+  sys() { return current || null; },
+  boardUrl() {
+    if (!current) return null;
+    const rs = current.render;
+    let plate = null;
+    rs.scene.traverse((o) => { if (o.name === 'urlPlate') plate = o; });
+    if (!plate) return { text: rs.urlText || null, present: false };
+    const map = plate.material && plate.material.map;
+    return {
+      text: rs.urlText || null,
+      present: true,
+      visible: plate.visible,
+      pos: [plate.position.x, plate.position.y, plate.position.z],
+      mapW: map && map.image ? map.image.width : 0,
+      mapH: map && map.image ? map.image.height : 0,
+    };
+  },
 };
 
 // ---------- setup screen ----------

@@ -43,6 +43,20 @@
 
   <p><a class="play" href="./index.html">Play Meridian Estates</a></p>
 
+  <p class="sub">Game address: <b><span id="about-url">ade5791.github.io/meridian-estates</span></b>
+     - also engraved on the board itself and shown in the corner of the game screen.</p>
+  <script>
+  (function () {
+    try {
+      var h = (location.hostname || '').toLowerCase();
+      if (!h || h === 'localhost' || h === '127.0.0.1' || h === '[::1]') return;
+      if (location.protocol === 'file:') return;
+      var p = (location.pathname || '/').replace(/about\.html$/i, '').replace(/\/+$/, '');
+      document.getElementById('about-url').textContent = location.host + p;
+    } catch (e) { /* keep the canonical fallback */ }
+  })();
+  </script>
+
   <h2>How to play</h2>
   <ul>
     <li><b>Goal.</b> Be the last player who is not bankrupt. If nobody is bankrupted before

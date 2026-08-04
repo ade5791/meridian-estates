@@ -1,0 +1,3 @@
+# Publish byte-exact. The build hash covers the exact bytes in dist/;
+# any LF->CRLF normalization would serve different bytes than were gated.
+* -text

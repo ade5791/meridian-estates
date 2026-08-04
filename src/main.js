@@ -246,6 +246,27 @@ window.__qa = {
     return true;
   },
   stop() { if (current) { current.stop(); current = null; } return true; },
+  // S6e: QA accessors for the board URL plate. Exposing the live subsystem lets
+  // the gate prove the plate is really in the scene graph, textured, positioned
+  // clear of the dice/emblem, and actually drawn - rather than inferring it from
+  // source. Read-only helpers; no gameplay surface is added.
+  sys() { return current || null; },
+  boardUrl() {
+    if (!current) return null;
+    const rs = current.render;
+    let plate = null;
+    rs.scene.traverse((o) => { if (o.name === 'urlPlate') plate = o; });
+    if (!plate) return { text: rs.urlText || null, present: false };
+    const map = plate.material && plate.material.map;
+    return {
+      text: rs.urlText || null,
+      present: true,
+      visible: plate.visible,
+      pos: [plate.position.x, plate.position.y, plate.position.z],
+      mapW: map && map.image ? map.image.width : 0,
+      mapH: map && map.image ? map.image.height : 0,
+    };
+  },
 };
 
 // ---------- setup screen ----------

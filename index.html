@@ -146,6 +146,25 @@
     background: rgba(14,22,32,.8); border: 1px solid #2e4258; border-radius: 6px;
     padding: 6px 10px; min-height: 32px; display: inline-flex; align-items: center; }
   #about-link:hover { color: #d8c07a; }
+  /* S6e: the game address, always on screen and copyable. Bottom-RIGHT so it
+     cannot collide with #about-link (bottom-left) or #actions (bottom-centre).
+     On short/mobile viewports the mute button owns the bottom-right corner, so
+     the badge moves up to sit above it. */
+  #url-badge { position: fixed; right: calc(10px + env(safe-area-inset-right, 0px));
+    bottom: calc(10px + env(safe-area-inset-bottom, 0px)); z-index: 12;
+    color: #d8c07a; font-size: 12px; letter-spacing: .3px; cursor: pointer;
+    background: rgba(14,22,32,.8); border: 1px solid #3a516b; border-radius: 6px;
+    padding: 6px 10px; min-height: 32px; display: inline-flex; align-items: center;
+    font-family: Georgia, serif; }
+  #url-badge:hover { border-color: #d8c07a; color: #f0e0ae; }
+  @media (max-width: 700px) {
+    #url-badge { bottom: calc(62px + env(safe-area-inset-bottom, 0px)); font-size: 11px; }
+  }
+  @media (max-height: 480px) and (orientation: landscape) {
+    #url-badge { bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+      left: calc(10px + env(safe-area-inset-left, 0px)); right: auto; font-size: 11px; }
+    #about-link { left: auto; right: calc(150px + env(safe-area-inset-right, 0px)); }
+  }
 </style>
 <script type="importmap">
 { "imports": { "three": "./vendor/three.module.js" } }
@@ -157,5 +176,38 @@
 <div id="setup" class="hidden"></div>
 <script type="module" src="./src/main.js"></script>
 <a id="about-link" href="./about.html">About &amp; Rules</a>
+<div id="url-badge" title="Copy this game's address"><span id="url-badge-text">loading</span></div>
+<script>
+(function () {
+  var FALLBACK = 'ade5791.github.io/meridian-estates';
+  function addr() {
+    try {
+      var h = (location.hostname || '').toLowerCase();
+      if (!h || h === 'localhost' || h === '127.0.0.1' || h === '[::1]') return FALLBACK;
+      if (location.protocol === 'file:') return FALLBACK;
+      var p = (location.pathname || '/').replace(/index\.html$/i, '').replace(/\/+$/, '');
+      return location.host + p;
+    } catch (e) { return FALLBACK; }
+  }
+  var badge = document.getElementById('url-badge');
+  var span = document.getElementById('url-badge-text');
+  var text = addr();
+  span.textContent = text;
+  badge.setAttribute('data-url', text);
+  badge.addEventListener('click', function () {
+    var proto = (location.protocol === 'http:' || location.protocol === 'https:')
+      ? location.protocol : 'https:';
+    var full = proto + '//' + text + '/';
+    var done = function () {
+      var old = span.textContent;
+      span.textContent = 'link copied';
+      setTimeout(function () { span.textContent = old; }, 1400);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(full).then(done, done);
+    } else { done(); }
+  });
+})();
+</script>
 </body>
 </html>

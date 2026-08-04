@@ -49,6 +49,52 @@ function makeLabelTexture(text, sub, bg, fg) {
   return tx;
 }
 
+// S6e: the live game address, rendered onto the board felt.
+// Derived from location at RUNTIME rather than hard-coded, so the plaque always
+// shows the address the player is actually on - the published build shows the
+// published URL, and a local QA server shows the canonical fallback instead of
+// "localhost". Drawn without the scheme ("host/path" is what a person types),
+// which also keeps the build's no-external-reference scan clean: no literal
+// http(s) URL is ever written into a shipped source file.
+export function gameUrlText() {
+  const FALLBACK = 'ade5791.github.io/meridian-estates';
+  try {
+    if (typeof location === 'undefined') return FALLBACK;
+    const h = (location.hostname || '').toLowerCase();
+    if (!h || h === 'localhost' || h === '127.0.0.1' || h === '[::1]') return FALLBACK;
+    if (location.protocol === 'file:') return FALLBACK;
+    let p = (location.pathname || '/').replace(/index\.html$/i, '').replace(/\/+$/, '');
+    return location.host + p;
+  } catch (err) {
+    return FALLBACK;
+  }
+}
+
+// Engraved brass-on-felt plate. 8:1 canvas so the plane keeps texel aspect.
+function makeUrlTexture(url) {
+  const c = document.createElement('canvas');
+  c.width = 1024; c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#1f3826'; g.fillRect(0, 0, 1024, 128);
+  g.strokeStyle = '#d8c07a'; g.lineWidth = 4;
+  g.strokeRect(8, 8, 1008, 112);
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillStyle = '#93ab93';
+  g.font = 'bold 26px Georgia, serif';
+  g.fillText('P L A Y   O N L I N E   A T', 512, 34);
+  g.fillStyle = '#e8d9a8';
+  let size = 48;
+  g.font = 'bold ' + size + 'px Georgia, serif';
+  while (g.measureText(url).width > 930 && size > 18) {
+    size -= 2;
+    g.font = 'bold ' + size + 'px Georgia, serif';
+  }
+  g.fillText(url, 512, 86);
+  const tx = new THREE.CanvasTexture(c);
+  tx.anisotropy = 4;
+  return tx;
+}
+
 export class RenderSystem {
   static id = 'render';
   static deps = [];
@@ -281,6 +327,27 @@ export class RenderSystem {
     emblem.rotation.z = Math.PI / 4;
     emblem.position.y = 0.06;
     this.scene.add(emblem);
+
+    // S6e: the game's live address, engraved on the felt.
+    // Placement is deliberate and collision-checked against everything else on
+    // the felt: the emblem is a 7x7 plane rotated 45deg, so its furthest reach
+    // along an axis is 4.95 units; the dice rest at z=+2 and the drawn card
+    // hovers over the origin. z=-5.4 with a 1.125-unit tall plate (spanning
+    // -5.96..-4.84) therefore sits clear of all three and inside the felt,
+    // which runs to -9. Facing matches the emblem so it reads from the default
+    // camera pose.
+    this.urlText = gameUrlText();
+    const urlTex = makeUrlTexture(this.urlText);
+    const urlPlate = new THREE.Mesh(
+      new THREE.PlaneGeometry(9, 1.125),
+      new THREE.MeshStandardMaterial({ map: urlTex, roughness: 0.85, metalness: 0.05 })
+    );
+    urlPlate.rotation.x = -Math.PI / 2;
+    urlPlate.position.set(0, 0.065, -5.4);
+    urlPlate.receiveShadow = true;
+    urlPlate.name = 'urlPlate';
+    this.urlPlate = urlPlate;
+    this.scene.add(urlPlate);
 
     // tiles
     const tileGeo = new THREE.BoxGeometry(TILE_W - 0.06, 0.14, TILE_W - 0.06);
@@ -964,6 +1031,7 @@ export class RenderSystem {
     // own references, so it must be cleared or a restart leaks them.
     if (this._landmarks) { this._landmarks.dispose(); this._landmarks = null; }
     this.landmarkGroups = {};
+    this.urlPlate = null;   // S6e: geometry/material/texture already disposed by the traverse
     this.tokens = [];
     this.buildingGroups = {};
     this.ownerRings = {};
